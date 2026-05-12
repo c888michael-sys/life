@@ -345,6 +345,19 @@ class Database:
             ).fetchall()
         return rows
 
+    def list_completed_goals(self, user_id: int) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, title, goal_type, created_at
+                FROM goals
+                WHERE user_id = ? AND is_completed = 1
+                ORDER BY created_at DESC
+                """,
+                (user_id,),
+            ).fetchall()
+        return rows
+
     def complete_goal(self, user_id: int, goal_id: int) -> bool:
         with self._connect() as conn:
             result = conn.execute(
@@ -803,16 +816,30 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     if data == "goals_view":
-        goals = db.list_goals(user.id)
-        if not goals:
+        open_short = db.list_open_goals(user.id, "short")
+        open_long = db.list_open_goals(user.id, "long")
+        completed = db.list_completed_goals(user.id)
+
+        if not open_short and not open_long and not completed:
             await send_or_edit(update, "No goals yet.", goals_menu_keyboard())
             return
 
-        lines = ["Goals:"]
-        for goal in goals:
-            status = "Done" if goal["is_completed"] else "Open"
-            goal_type = "Short" if goal["goal_type"] == "short" else "Long"
-            lines.append(f"#{goal['id']} [{goal_type}] {goal['title']} - {status}")
+        lines = ["Goals:", "", "Open:"]
+        open_goals = open_short + open_long
+        if not open_goals:
+            lines.append("- None")
+        else:
+            for goal in open_goals:
+                goal_type = "Short" if goal["goal_type"] == "short" else "Long"
+                lines.append(f"#{goal['id']} [{goal_type}] {goal['title']} - Open")
+
+        lines.extend(["", "Completed:"])
+        if not completed:
+            lines.append("- None")
+        else:
+            for goal in completed:
+                goal_type = "Short" if goal["goal_type"] == "short" else "Long"
+                lines.append(f"#{goal['id']} [{goal_type}] {goal['title']} - Done")
         await send_or_edit(update, "\n".join(lines), goals_menu_keyboard())
         return
 
