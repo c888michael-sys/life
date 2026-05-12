@@ -336,7 +336,7 @@ class Database:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, title, created_at, last_reminded_at
+                SELECT id, title, goal_type, created_at, last_reminded_at
                 FROM goals
                 WHERE user_id = ? AND goal_type = ? AND is_completed = 0
                 ORDER BY created_at DESC
