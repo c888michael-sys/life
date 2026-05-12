@@ -600,7 +600,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     _ = context
     await update.message.reply_text(
-        "Use /start to open the bot.\n"
+        "Use /start to log in.\n"
+        "Use /menu to open the main menu.\n"
         "Main sections: Income, Goals, Workout, Setup.\n"
         "Admin panel appears in Setup for admin IDs."
     )
@@ -618,6 +619,14 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("Admin access only.")
         return
     await update.message.reply_text("Admin panel", reply_markup=admin_menu_keyboard())
+
+
+async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = await ensure_authenticated(update, context)
+    if not user:
+        return
+    clear_user_flow(context)
+    await update.message.reply_text("Main menu", reply_markup=main_menu_keyboard())
 
 
 async def ensure_authenticated(update: Update, context: ContextTypes.DEFAULT_TYPE) -> User | None:
@@ -1152,6 +1161,7 @@ def build_application() -> Application:
     application = Application.builder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("menu", menu_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("admin", admin_command))
     application.add_handler(CallbackQueryHandler(handle_callback))
