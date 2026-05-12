@@ -827,28 +827,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data == "goals_view":
         open_short = db.list_open_goals(user.id, "short")
         open_long = db.list_open_goals(user.id, "long")
-        completed = db.list_completed_goals(user.id)
 
-        if not open_short and not open_long and not completed:
-            await send_or_edit(update, "No goals yet.", goals_menu_keyboard())
+        if not open_short and not open_long:
+            await send_or_edit(update, "No open goals.", goals_menu_keyboard())
             return
 
-        lines = ["Goals:", "", "Open:"]
+        lines = ["Open goals:"]
         open_goals = open_short + open_long
-        if not open_goals:
-            lines.append("- None")
-        else:
-            for goal in open_goals:
-                goal_type = "Short" if goal["goal_type"] == "short" else "Long"
-                lines.append(f"#{goal['id']} [{goal_type}] {goal['title']} - Open")
-
-        lines.extend(["", "Completed:"])
-        if not completed:
-            lines.append("- None")
-        else:
-            for goal in completed:
-                goal_type = "Short" if goal["goal_type"] == "short" else "Long"
-                lines.append(f"#{goal['id']} [{goal_type}] {goal['title']} - Done")
+        for goal in open_goals:
+            goal_type = "Short" if goal["goal_type"] == "short" else "Long"
+            lines.append(f"#{goal['id']} [{goal_type}] {goal['title']}")
         await send_or_edit(update, "\n".join(lines), goals_menu_keyboard())
         return
 
