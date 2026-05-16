@@ -8,7 +8,13 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    Update,
+)
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -482,14 +488,22 @@ class Database:
 db = Database(DB_PATH)
 
 
-def main_menu_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
+# Persistent main-menu (reply keyboard) labels
+MAIN_BTN_INCOME = "Income"
+MAIN_BTN_GOALS = "Goals"
+MAIN_BTN_WORKOUT = "Workout"
+MAIN_BTN_SETUP = "Setup"
+MAIN_MENU_LABELS = {MAIN_BTN_INCOME, MAIN_BTN_GOALS, MAIN_BTN_WORKOUT, MAIN_BTN_SETUP}
+
+
+def main_reply_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
         [
-            [InlineKeyboardButton("Income", callback_data="main_income")],
-            [InlineKeyboardButton("Goals", callback_data="main_goals")],
-            [InlineKeyboardButton("Workout", callback_data="main_workout")],
-            [InlineKeyboardButton("Setup", callback_data="main_setup")],
-        ]
+            [MAIN_BTN_INCOME, MAIN_BTN_GOALS],
+            [MAIN_BTN_WORKOUT, MAIN_BTN_SETUP],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
     )
 
 
@@ -569,6 +583,25 @@ async def send_or_edit(update: Update, text: str, keyboard: InlineKeyboardMarkup
         await update.effective_message.reply_text(text=text, reply_markup=keyboard)
 
 
+async def send_main_menu_message(update: Update, text: str = "Main menu") -> None:
+    # Always send a fresh message so the persistent reply keyboard attaches properly.
+    # If invoked from an inline callback, strip the inline buttons on the source message
+    # so the chat doesn't keep a stale floating menu around.
+    if update.callback_query:
+        try:
+            await update.callback_query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+    await update.effective_message.reply_text(text, reply_markup=main_reply_keyboard())
+
+
+async def force_refresh_main_menu(update: Update, text: str = "Main menu") -> None:
+    # Used by /menu — bust any stale persistent-keyboard cache on the client by sending
+    # remove_keyboard first, then re-attaching the current layout.
+    await update.effective_message.reply_text("Refreshing menu...", reply_markup=ReplyKeyboardRemove())
+    await update.effective_message.reply_text(text, reply_markup=main_reply_keyboard())
+
+
 def clear_user_flow(context: ContextTypes.DEFAULT_TYPE) -> None:
     for key in (
         "awaiting",
@@ -587,10 +620,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     existing_user = db.get_user_by_telegram_id(telegram_id)
 
     if existing_user and existing_user.is_authenticated:
-        await update.message.reply_text(
-            f"Welcome back, {existing_user.name}.",
-            reply_markup=main_menu_keyboard(),
-        )
+        await send_main_menu_message(update, f"Welcome back, {existing_user.name}.")
         return
 
     context.user_data["awaiting"] = "auth_name"
@@ -626,7 +656,7 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not user:
         return
     clear_user_flow(context)
-    await update.message.reply_text("Main menu", reply_markup=main_menu_keyboard())
+    await force_refresh_main_menu(update)
 
 
 async def ensure_authenticated(update: Update, context: ContextTypes.DEFAULT_TYPE) -> User | None:
@@ -654,7 +684,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data == "main_back":
         clear_user_flow(context)
-        await send_or_edit(update, "Main menu", main_menu_keyboard())
+        await send_main_menu_message(update)
         return
 
     if data == "main_income":
@@ -1007,7 +1037,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             clear_user_flow(context)
             await update.message.reply_text(
                 f"Welcome, {name}. Access granted.",
-                reply_markup=main_menu_keyboard(),
+                reply_markup=main_reply_keyboard(),
             )
         else:
             clear_user_flow(context)
@@ -1017,6 +1047,22 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     user = db.get_user_by_telegram_id(telegram_id)
     if not user or not user.is_authenticated:
         await update.message.reply_text("Please use /start first.")
+        return
+
+    # Persistent main-menu buttons always navigate, even mid-flow (escape hatch).
+    if text in MAIN_MENU_LABELS:
+        clear_user_flow(context)
+        if text == MAIN_BTN_INCOME:
+            await update.message.reply_text("Income menu", reply_markup=income_menu_keyboard())
+        elif text == MAIN_BTN_GOALS:
+            await update.message.reply_text("Goals menu", reply_markup=goals_menu_keyboard())
+        elif text == MAIN_BTN_WORKOUT:
+            await update.message.reply_text("Workout menu", reply_markup=workout_menu_keyboard())
+        elif text == MAIN_BTN_SETUP:
+            await update.message.reply_text(
+                "Setup menu",
+                reply_markup=setup_menu_keyboard(is_admin(telegram_id)),
+            )
         return
 
     if awaiting == "income_add_amount":
@@ -1095,7 +1141,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     await update.message.reply_text(
-        "Use the menu buttons to continue.", reply_markup=main_menu_keyboard()
+        "Use the menu buttons to continue.", reply_markup=main_reply_keyboard()
     )
 
 
