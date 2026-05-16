@@ -1,6 +1,10 @@
+import json
 import logging
 import os
 import sqlite3
+import sys
+import urllib.error
+import urllib.request
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
@@ -1217,7 +1221,77 @@ def build_application() -> Application:
     return application
 
 
+DUPLICATE_ALERT_STATE = Path(__file__).with_name(".duplicate_alert_count")
+DUPLICATE_ALERT_MAX = 3
+
+
+def _telegram_call(token: str, method: str, payload: dict | None = None, timeout: float = 15) -> dict:
+    url = f"https://api.telegram.org/bot{token}/{method}"
+    data = json.dumps(payload or {}).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            return json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            return {"ok": False, "error_code": exc.code, "description": str(exc)}
+
+
+def check_for_duplicate_poller(token: str, admin_ids: set[int]) -> None:
+    me = _telegram_call(token, "getMe", timeout=10)
+    if not me.get("ok"):
+        logger.error("getMe failed during startup probe: %s", me)
+        return
+
+    username = me["result"]["username"]
+    logger.info("Bot @%s starting as PID %d (life bot)", username, os.getpid())
+
+    probe = _telegram_call(token, "getUpdates", {"timeout": 0, "limit": 1}, timeout=15)
+    if probe.get("error_code") != 409:
+        try:
+            DUPLICATE_ALERT_STATE.unlink()
+        except FileNotFoundError:
+            pass
+        return
+
+    try:
+        count = int(DUPLICATE_ALERT_STATE.read_text().strip())
+    except (FileNotFoundError, ValueError):
+        count = 0
+
+    if count < DUPLICATE_ALERT_MAX and admin_ids:
+        host = os.uname().nodename if hasattr(os, "uname") else "unknown"
+        text = (
+            f"life bot: another instance is polling.\n"
+            f"Host: {host}\n"
+            f"PID refusing to start: {os.getpid()}\n"
+            f"Alert {count + 1}/{DUPLICATE_ALERT_MAX} — will go silent after this.\n"
+            f"Fix: ssh in, find the duplicate (ps -ef | grep 'life/bot.py'), "
+            f"check /proc/<pid>/cgroup, kill the one not under life-bot.service."
+        )
+        for admin_id in admin_ids:
+            send_result = _telegram_call(
+                token, "sendMessage", {"chat_id": admin_id, "text": text}, timeout=10
+            )
+            if not send_result.get("ok"):
+                logger.warning("Failed to send duplicate-alert to %s: %s", admin_id, send_result)
+        try:
+            DUPLICATE_ALERT_STATE.write_text(str(count + 1))
+        except Exception as exc:
+            logger.warning("Failed to write alert state: %s", exc)
+
+    logger.error(
+        "409 Conflict on startup probe — another instance is polling. Refusing to start (alert %d/%d).",
+        min(count + 1, DUPLICATE_ALERT_MAX),
+        DUPLICATE_ALERT_MAX,
+    )
+    sys.exit(1)
+
+
 def main() -> None:
+    check_for_duplicate_poller(BOT_TOKEN, ADMIN_IDS)
     app = build_application()
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
